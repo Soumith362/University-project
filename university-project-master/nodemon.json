@@ -1,7 +1,0 @@
-{
-    "ignore": [
-      "src/swagger/swagger-output.json",
-      "node_modules/"
-    ]
-  }
-  
