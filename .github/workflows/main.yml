@@ -1,0 +1,27 @@
+name: test pipeline 
+on: 
+ push: 
+   branches:
+    - master
+    
+jobs:         
+  dev_docker_build:
+    runs-on: self-hosted
+    steps:
+      - name: checkout 
+        uses: actions/checkout@v3
+      - name: docker build dev 
+        run: |
+          cd bck_devops_testing
+          docker build -t backend-dev . 
+              
+  dev_docker_dep:
+    runs-on: self-hosted
+    steps:
+      - name: checkout 
+        uses: actions/checkout@v3 
+      - name: docker run dev
+        run: | 
+          docker run -d --name Bckdev -p 8080:8080  backend-dev 
+          
+ 
