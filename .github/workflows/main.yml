@@ -1,27 +1,24 @@
-name: test pipeline 
-on: 
- push: 
-   branches:
-    - master
-    
-jobs:         
-  dev_docker_build:
-    runs-on: self-hosted
+name: University Project Pipeline
+
+on:
+  push:
+    branches:
+      - master  # Fixed branch name
+
+jobs:
+  build-and-deploy:
+    runs-on: self-hosted  # Correct key
     steps:
-      - name: checkout 
-        uses: actions/checkout@v3
-      - name: docker build dev 
-        run: |
-          cd University-project
-          docker build -t university-project . 
-              
-  dev_docker_dep:
-    runs-on: self-hosted
-    steps:
-      - name: checkout 
-        uses: actions/checkout@v3 
-      - name: docker run dev
-        run: | 
+      - name: Checkout code
+        uses: actions/checkout@v4  # Fixed version
+
+      - name: Build Docker image
+        run: docker build -t university-project .  # No cd!
+
+      - name: Run Docker container
+        run: |  # Multi-line command
+          docker stop universityproject || true
+          docker rm universityproject || true
           docker run -d --name universityproject -p 8080:8080 university-project
 
 
