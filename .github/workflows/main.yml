@@ -12,7 +12,7 @@ jobs:
         uses: actions/checkout@v3
       - name: docker build dev 
         run: |
-          cd bck_devops_testing
+          cd University-project
           docker build -t university-project . 
               
   dev_docker_dep:
