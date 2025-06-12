@@ -13,7 +13,7 @@ jobs:
       - name: docker build dev 
         run: |
           cd bck_devops_testing
-          docker build -t University-project . 
+          docker build -t university-project . 
               
   dev_docker_dep:
     runs-on: self-hosted
@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v3 
       - name: docker run dev
         run: | 
-          docker run -d --name Universityproject -p 8080:8080 University-project
+          docker run -d --name universityproject -p 8080:8080 university-project
 
 
           
