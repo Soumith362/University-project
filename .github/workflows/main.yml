@@ -1,26 +1,98 @@
-name: University Project Pipeline
+name: University Project Pipeline - Multi Branch
 
 on:
   push:
     branches:
-      - master  # Fixed branch name
+      - master
+      - staging
+      - feature/**
+      - hotfix/**
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: university-project
+  TAG: ${{ github.ref_name }}-${{ github.sha }}
 
 jobs:
-  build-and-deploy:
-    runs-on: self-hosted  # Correct key
+  build-test-deploy:
+    runs-on: self-hosted
+    strategy:
+      matrix:
+        branch: [master, staging]
+        include:
+          - branch: master
+            port: 8080
+            env: prod
+          - branch: staging
+            port: 8081
+            env: staging
+    if: ${{ contains(matrix.branch, github.ref_name) }}
+    
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4  # Fixed version
+        uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t university-project .  # No cd!
+        run: docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }} .
+        
+      - name: Run tests
+        run: |
+          docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }} \
+          npm test  # Replace with your test command
 
-      - name: Run Docker container
-        run: |  # Multi-line command
-          docker stop universityproject || true
-          docker rm universityproject || true
-          docker run -d --name universityproject -p 8080:8080 university-project
+      - name: Push to Container Registry
+        if: ${{ github.ref_name == 'master' || github.ref_name == 'staging' }}
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
 
+      - name: Deploy to environment
+        run: |
+          docker stop universityproject-${{ matrix.env }} || true
+          docker rm universityproject-${{ matrix.env }} || true
+          docker run -d \
+            --name universityproject-${{ matrix.env }} \
+            -p ${{ matrix.port }}:8080 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
 
-          
- 
+  feature-branch:
+    runs-on: self-hosted
+    if: ${{ contains(github.ref, 'refs/heads/feature/') }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build and test
+        run: |
+          docker build -t university-project-feature .
+          docker run --rm university-project-feature npm test
+
+      - name: Deploy to ephemeral environment
+        run: |
+          PORT=$(shuf -i 8000-9000 -n 1)
+          docker run -d \
+            --name universityproject-${{ github.ref_name }} \
+            -p $PORT:8080 \
+            university-project-feature
+        env:
+          GH_COMMENT_TOKEN: ${{ secrets.GH_TOKEN }}
+      
+      - name: Comment deployment URL
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🚀 Feature environment deployed! Access it at: http://3.109.55.75:$PORT`
+            })
+
+  cleanup:
+    runs-on: self-hosted
+    if: ${{ github.ref_type == 'delete' && github.ref_name != 'master' && github.ref_name != 'staging' }}
+    steps:
+      - name: Remove feature containers
+        run: |
+          docker stop universityproject-${{ github.ref_name }} || true
+          docker rm universityproject-${{ github.ref_name }} || true
