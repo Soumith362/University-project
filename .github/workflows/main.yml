@@ -19,7 +19,11 @@ jobs:
 
       - name: Login to Docker Hub
         if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/staging'
-        run: docker login -u ${{ secrets.DOCKER_HUB_USERNAME }} -p ${{ secrets.DOCKER_HUB_TOKEN }}
+        env:
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
+        run: |
+          echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USERNAME" --password-stdin
 
       - name: Push Docker image
         if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/staging'
