@@ -10,53 +10,51 @@ env:
   TAG: ${{ github.ref_name }}
 
 jobs:
-  build-test-deploy:
+  deploy-development:
+    if: github.ref_name == 'development'
     runs-on: self-hosted
-    strategy:
-      matrix:
-        branch: [development, staging, master]
-        include:
-          - branch: development
-            port: 8081
-            env_file: .env.dev
-          - branch: staging
-            port: 8082
-            env_file: .env.stage
-          - branch: master
-            port: 8080
-            env_file: .env.prod
-
-    # 🔧 Only run for the matching matrix branch
-    if: github.ref_name == matrix.branch
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v2
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+      - name: Build Docker Image
+        run: |
+          docker build -t $REGISTRY/$IMAGE_NAME:$TAG .
+
+      - name: Run tests
+        run: docker run --rm $REGISTRY/$IMAGE_NAME:$TAG npm test
+
+      - name: Deploy container
+        run: |
+          docker stop uni-project-$TAG || true
+          docker rm uni-project-$TAG || true
+          docker run -d \
+            --name uni-project-$TAG \
+            -p 8081:8080 \
+            --env-file .env.dev \
+            $REGISTRY/$IMAGE_NAME:$TAG
+
+  deploy-staging:
+    if: github.ref_name == 'staging'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v2
 
       - name: Login to Docker Hub
-        if: matrix.branch != 'development'
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
-      - name: Build and tag Docker image
+      - name: Build Docker Image
         run: |
-          docker build \
-            --file Dockerfile \
-            --tag $REGISTRY/$IMAGE_NAME:$TAG \
-            --tag $REGISTRY/$IMAGE_NAME:latest \
-            .
+          docker build -t $REGISTRY/$IMAGE_NAME:$TAG .
 
       - name: Run tests
-        run: |
-          docker run --rm $REGISTRY/$IMAGE_NAME:$TAG npm test
+        run: docker run --rm $REGISTRY/$IMAGE_NAME:$TAG npm test
 
-      - name: Push Docker image
-        if: matrix.branch != 'development'
+      - name: Push Image
         run: docker push $REGISTRY/$IMAGE_NAME:$TAG
 
       - name: Deploy container
@@ -65,6 +63,39 @@ jobs:
           docker rm uni-project-$TAG || true
           docker run -d \
             --name uni-project-$TAG \
-            -p ${{ matrix.port }}:8080 \
-            --env-file ${{ matrix.env_file }} \
+            -p 8082:8080 \
+            --env-file .env.stage \
+            $REGISTRY/$IMAGE_NAME:$TAG
+
+  deploy-production:
+    if: github.ref_name == 'master'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v2
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      - name: Build Docker Image
+        run: |
+          docker build -t $REGISTRY/$IMAGE_NAME:$TAG .
+
+      - name: Run tests
+        run: docker run --rm $REGISTRY/$IMAGE_NAME:$TAG npm test
+
+      - name: Push Image
+        run: docker push $REGISTRY/$IMAGE_NAME:$TAG
+
+      - name: Deploy container
+        run: |
+          docker stop uni-project-$TAG || true
+          docker rm uni-project-$TAG || true
+          docker run -d \
+            --name uni-project-$TAG \
+            -p 8080:8080 \
+            --env-file .env.prod \
             $REGISTRY/$IMAGE_NAME:$TAG
