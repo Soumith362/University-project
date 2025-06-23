@@ -25,6 +25,10 @@ jobs:
           - branch: master
             port: 8080
             env_file: .env.prod
+
+    # 🔧 Only run for the matching matrix branch
+    if: github.ref_name == matrix.branch
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
