@@ -2,25 +2,34 @@ name: University Project Pipeline
 
 on:
   push:
-    branches:
-      - master  # Fixed branch name
+    branches: 
+      - master
+      - staging
+      - development
 
 jobs:
   build-and-deploy:
-    runs-on: self-hosted  # Correct key
+    runs-on: self-hosted
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4  # Fixed version
+        uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t university-project .  # No cd!
+        run: docker build -t university-project:${{ github.ref_name }} .
+
+      - name: Login to Docker Hub
+        if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/staging'
+        run: docker login -u ${{ secrets.DOCKER_HUB_USERNAME }} -p ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      - name: Push Docker image
+        if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/staging'
+        run: docker push university-project:${{ github.ref_name }}
 
       - name: Run Docker container
-        run: |  # Multi-line command
-          docker stop universityproject || true
-          docker rm universityproject || true
-          docker run -d --name universityproject -p 8080:8080 university-project
-
-
-          
- 
+        run: |
+          docker stop universityproject-${{ github.ref_name }} || true
+          docker rm universityproject-${{ github.ref_name }} || true
+          docker run -d \
+            --name universityproject-${{ github.ref_name }} \
+            -p 8080:8080 \
+            university-project:${{ github.ref_name }}
