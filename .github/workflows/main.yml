@@ -1,12 +1,17 @@
-name: Backend Multi-Branch Pipeline
+name: Optimized Backend Pipeline
 
 on:
   push:
     branches:
-      - master       # Production
-      - staging      # Staging environment
-      - develop      # Development
-      - feature/**   # Feature branches
+      - master
+      - staging
+      - develop
+      - feature/**
+
+# Cache configuration for faster builds
+env:
+  DOCKER_BUILDKIT: 1  # Enable Docker buildkit for faster builds
+  COMPOSE_DOCKER_CLI_BUILD: 1
 
 jobs:
   build:
@@ -15,28 +20,46 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # Only debug when needed (disable for normal runs)
       - name: Debug Repository Structure
+        if: false  # Set to 'true' only when debugging
         run: ls -R
 
-      - name: Build Backend Docker Image
+      - name: Cache Docker layers
+        uses: actions/cache@v3
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Build Backend Image (Cached)
         run: |
-          docker build -t backend:${{ github.ref_name }} -t backend:latest .
+          docker build \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new \
+            -t backend:${{ github.ref_name }} \
+            -t backend:latest \
+            .
+          rm -rf /tmp/.buildx-cache && mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
   deploy:
     runs-on: self-hosted
     needs: build
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/develop'
     steps:
-      - name: Stop and Remove Existing Container
+      - name: Stop and Remove Container (Graceful)
+        timeout-minutes: 2  # Prevent hanging
         run: |
-          docker stop backend-${{ github.ref_name }} || true
+          timeout 60 docker stop backend-${{ github.ref_name }} || true
           docker rm backend-${{ github.ref_name }} || true
 
-      - name: Run Backend Container
+      - name: Deploy Container
         run: |
           docker run -d \
             --name backend-${{ github.ref_name }} \
             -p 5000:5000 \
+            --restart unless-stopped \
             -e ENVIRONMENT=${{ github.ref_name }} \
             backend:${{ github.ref_name }}
 
@@ -44,12 +67,13 @@ jobs:
     runs-on: self-hosted
     needs: build
     if: startsWith(github.ref, 'refs/heads/feature/') || github.ref == 'refs/heads/develop'
+    timeout-minutes: 10  # Prevent test hanging
     steps:
-      - name: Run Unit Tests
+      - name: Run Unit Tests (Parallel)
         run: |
-          docker run --rm backend:${{ github.ref_name }} npm test
+          docker run --rm --cpus=1 backend:${{ github.ref_name }} npm test
 
-      - name: Run Integration Tests
+      - name: Integration Tests (Develop only)
         if: github.ref == 'refs/heads/develop'
         run: |
-          docker run --rm -e NODE_ENV=test backend:${{ github.ref_name }} npm run test:integration
+          docker run --rm --cpus=1.5 -e NODE_ENV=test backend:${{ github.ref_name }} npm run test:integration
