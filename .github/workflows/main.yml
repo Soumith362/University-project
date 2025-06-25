@@ -1,107 +1,55 @@
-name: University Project - Multi-Branch Pipeline
+name: Backend Multi-Branch Pipeline
 
 on:
   push:
-    branches: [ "development", "staging", "master" ]
-
-env:
-  REGISTRY: docker.io
-  IMAGE_NAME: university-project
-  TAG: ${{ github.ref_name }}
+    branches:
+      - master       # Production
+      - staging      # Staging environment
+      - develop      # Development
+      - feature/**   # Feature branches
 
 jobs:
-  deploy-development:
-    if: github.ref_name == 'development'
+  build:
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v2
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+      - name: Debug Repository Structure
+        run: ls -R
 
-      - name: Build Docker Image
+      - name: Build Backend Docker Image
         run: |
-          docker build -t $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG .
+          docker build -t backend:${{ github.ref_name }} -t backend:latest .
 
-      - name: Run tests
-        run: docker run --rm $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG npm test
-
-      - name: Deploy container
-        run: |
-          docker stop uni-project-$TAG || true
-          docker rm uni-project-$TAG || true
-          docker run -d \
-            --name uni-project-$TAG \
-            -p 8081:8080 \
-            --env-file .env.dev \
-            $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG
-
-  deploy-staging:
-    if: github.ref_name == 'staging'
+  deploy:
     runs-on: self-hosted
+    needs: build
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/develop'
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v2
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_TOKEN }}
-
-      - name: Build Docker Image
+      - name: Stop and Remove Existing Container
         run: |
-          docker build -t $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG .
+          docker stop backend-${{ github.ref_name }} || true
+          docker rm backend-${{ github.ref_name }} || true
 
-      - name: Run tests
-        run: docker run --rm $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG npm test
-
-      - name: Push Image
-        run: docker push $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG
-
-      - name: Deploy container
+      - name: Run Backend Container
         run: |
-          docker stop uni-project-$TAG || true
-          docker rm uni-project-$TAG || true
           docker run -d \
-            --name uni-project-$TAG \
-            -p 8082:8080 \
-            --env-file .env.stage \
-            $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG
+            --name backend-${{ github.ref_name }} \
+            -p 5000:5000 \
+            -e ENVIRONMENT=${{ github.ref_name }} \
+            backend:${{ github.ref_name }}
 
-  deploy-production:
-    if: github.ref_name == 'master'
+  test:
     runs-on: self-hosted
+    needs: build
+    if: startsWith(github.ref, 'refs/heads/feature/') || github.ref == 'refs/heads/develop'
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v2
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_TOKEN }}
-
-      - name: Build Docker Image
+      - name: Run Unit Tests
         run: |
-          docker build -t $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG .
+          docker run --rm backend:${{ github.ref_name }} npm test
 
-      - name: Run tests
-        run: docker run --rm $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG npm test
-
-      - name: Push Image
-        run: docker push $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG
-
-      - name: Deploy container
+      - name: Run Integration Tests
+        if: github.ref == 'refs/heads/develop'
         run: |
-          docker stop uni-project-$TAG || true
-          docker rm uni-project-$TAG || true
-          docker run -d \
-            --name uni-project-$TAG \
-            -p 8080:8080 \
-            --env-file .env.prod \
-            $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG
+          docker run --rm -e NODE_ENV=test backend:${{ github.ref_name }} npm run test:integration
