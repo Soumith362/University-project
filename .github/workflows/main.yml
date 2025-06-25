@@ -17,12 +17,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v2
 
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
       - name: Build Docker Image
         run: |
-          docker build -t $REGISTRY/$IMAGE_NAME:$TAG .
+          docker build -t $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG .
 
       - name: Run tests
-        run: docker run --rm $REGISTRY/$IMAGE_NAME:$TAG npm test
+        run: docker run --rm $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG npm test
 
       - name: Deploy container
         run: |
@@ -32,7 +38,7 @@ jobs:
             --name uni-project-$TAG \
             -p 8081:8080 \
             --env-file .env.dev \
-            $REGISTRY/$IMAGE_NAME:$TAG
+            $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG
 
   deploy-staging:
     if: github.ref_name == 'staging'
@@ -49,13 +55,13 @@ jobs:
 
       - name: Build Docker Image
         run: |
-          docker build -t $REGISTRY/$IMAGE_NAME:$TAG .
+          docker build -t $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG .
 
       - name: Run tests
-        run: docker run --rm $REGISTRY/$IMAGE_NAME:$TAG npm test
+        run: docker run --rm $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG npm test
 
       - name: Push Image
-        run: docker push $REGISTRY/$IMAGE_NAME:$TAG
+        run: docker push $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG
 
       - name: Deploy container
         run: |
@@ -65,7 +71,7 @@ jobs:
             --name uni-project-$TAG \
             -p 8082:8080 \
             --env-file .env.stage \
-            $REGISTRY/$IMAGE_NAME:$TAG
+            $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG
 
   deploy-production:
     if: github.ref_name == 'master'
@@ -82,13 +88,13 @@ jobs:
 
       - name: Build Docker Image
         run: |
-          docker build -t $REGISTRY/$IMAGE_NAME:$TAG .
+          docker build -t $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG .
 
       - name: Run tests
-        run: docker run --rm $REGISTRY/$IMAGE_NAME:$TAG npm test
+        run: docker run --rm $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG npm test
 
       - name: Push Image
-        run: docker push $REGISTRY/$IMAGE_NAME:$TAG
+        run: docker push $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG
 
       - name: Deploy container
         run: |
@@ -98,4 +104,4 @@ jobs:
             --name uni-project-$TAG \
             -p 8080:8080 \
             --env-file .env.prod \
-            $REGISTRY/$IMAGE_NAME:$TAG
+            $REGISTRY/${{ secrets.DOCKER_HUB_USERNAME }}/$IMAGE_NAME:$TAG
