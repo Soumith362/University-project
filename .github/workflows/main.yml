@@ -8,22 +8,23 @@ on:
       - develop
       - feature/**
 
-# Cache configuration for faster builds
 env:
-  DOCKER_BUILDKIT: 1  # Enable Docker buildkit for faster builds
+  DOCKER_BUILDKIT: 1
   COMPOSE_DOCKER_CLI_BUILD: 1
+  DOCKER_IMAGE: backend
+  PORT: 5000
 
 jobs:
   build:
     runs-on: self-hosted
+    outputs:
+      image-tag: ${{ steps.set-tag.outputs.tag }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # Only debug when needed (disable for normal runs)
-      - name: Debug Repository Structure
-        if: false  # Set to 'true' only when debugging
-        run: ls -R
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
 
       - name: Cache Docker layers
         uses: actions/cache@v3
@@ -33,23 +34,81 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-buildx-
 
-      - name: Build Backend Image (Cached)
+      - name: Login to Docker Registry
+        if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/staging'
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and Cache Docker Image
         run: |
           docker build \
             --cache-from type=local,src=/tmp/.buildx-cache \
             --cache-to type=local,dest=/tmp/.buildx-cache-new \
-            -t backend:${{ github.ref_name }} \
-            -t backend:latest \
+            -t $DOCKER_IMAGE:${{ github.ref_name }} \
+            -t $DOCKER_IMAGE:latest \
             .
           rm -rf /tmp/.buildx-cache && mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
-  deploy:
+      - name: Push to Registry (Production/Staging)
+        if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/staging'
+        run: |
+          docker push $DOCKER_IMAGE:${{ github.ref_name }}
+          docker push $DOCKER_IMAGE:latest
+
+      - name: Set Image Tag Output
+        id: set-tag
+        run: echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+
+  test:
     runs-on: self-hosted
     needs: build
+    if: startsWith(github.ref, 'refs/heads/feature/') || github.ref == 'refs/heads/develop'
+    strategy:
+      matrix:
+        test-type: ['unit', 'integration']
+        exclude:
+          - test-type: 'integration'
+            if: github.ref != 'refs/heads/develop'
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Run Unit Tests
+        if: matrix.test-type == 'unit'
+        run: |
+          docker run --rm \
+            --cpus=1 \
+            -v $(pwd)/test-results:/app/test-results \
+            $DOCKER_IMAGE:${{ needs.build.outputs.image-tag }} \
+            sh -c "npm test -- --reporters=jest-junit && mv junit.xml test-results/unit-test-results.xml"
+
+      - name: Run Integration Tests
+        if: matrix.test-type == 'integration' && github.ref == 'refs/heads/develop'
+        run: |
+          docker run --rm \
+            --cpus=1.5 \
+            -e NODE_ENV=test \
+            -e TEST_DB_URL=${{ secrets.TEST_DB_URL }} \
+            -v $(pwd)/test-results:/app/test-results \
+            $DOCKER_IMAGE:${{ needs.build.outputs.image-tag }} \
+            sh -c "npm run test:integration -- --reporters=jest-junit && mv junit.xml test-results/integration-test-results.xml"
+
+      - name: Publish Test Results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: test-results-${{ matrix.test-type }}
+          path: test-results/${{ matrix.test-type }}-test-results.xml
+
+  deploy:
+    runs-on: self-hosted
+    needs: [build, test]
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/develop'
     steps:
-      - name: Stop and Remove Container (Graceful)
-        timeout-minutes: 2  # Prevent hanging
+      - name: Stop and Remove Existing Container
+        timeout-minutes: 2
         run: |
           timeout 60 docker stop backend-${{ github.ref_name }} || true
           docker rm backend-${{ github.ref_name }} || true
@@ -58,22 +117,42 @@ jobs:
         run: |
           docker run -d \
             --name backend-${{ github.ref_name }} \
-            -p 5000:5000 \
+            -p $PORT:$PORT \
             --restart unless-stopped \
+            --cpus="1.5" \
+            --memory="512m" \
             -e ENVIRONMENT=${{ github.ref_name }} \
-            backend:${{ github.ref_name }}
+            -e PORT=$PORT \
+            -e DB_URL=${{ secrets.DB_URL }} \
+            -v /var/log/backend:/app/logs \
+            $DOCKER_IMAGE:${{ needs.build.outputs.image-tag }}
 
-  test:
-    runs-on: self-hosted
-    needs: build
-    if: startsWith(github.ref, 'refs/heads/feature/') || github.ref == 'refs/heads/develop'
-    timeout-minutes: 10  # Prevent test hanging
+      - name: Health Check
+        run: |
+          sleep 10  # Give container time to start
+          curl --fail http://localhost:$PORT/health || exit 1
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: [build, test, deploy]
+    if: always()
     steps:
-      - name: Run Unit Tests (Parallel)
-        run: |
-          docker run --rm --cpus=1 backend:${{ github.ref_name }} npm test
-
-      - name: Integration Tests (Develop only)
-        if: github.ref == 'refs/heads/develop'
-        run: |
-          docker run --rm --cpus=1.5 -e NODE_ENV=test backend:${{ github.ref_name }} npm run test:integration
+      - name: Send Slack Notification
+        if: failure()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "🚨 Pipeline failed: ${{ github.workflow }} on ${{ github.ref }}",
+              "attachments": [{
+                "color": "#ff0000",
+                "fields": [
+                  { "title": "Repository", "value": "${{ github.repository }}", "short": true },
+                  { "title": "Branch", "value": "${{ github.ref }}", "short": true },
+                  { "title": "Commit", "value": "${{ github.sha }}", "short": false },
+                  { "title": "Failed Job", "value": "${{ needs.*.result }}", "short": false }
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
