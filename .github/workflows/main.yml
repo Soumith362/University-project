@@ -6,7 +6,7 @@ on:
       - master
       - staging
       - develop
-      - feature/**
+      - 'feature/**'
 
 env:
   DOCKER_BUILDKIT: 1
@@ -65,18 +65,8 @@ jobs:
     runs-on: self-hosted
     needs: build
     if: startsWith(github.ref, 'refs/heads/feature/') || github.ref == 'refs/heads/develop'
-    strategy:
-      matrix:
-        test-type: ['unit', 'integration']
-        exclude:
-          - test-type: 'integration'
-            if: github.ref != 'refs/heads/develop'
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
       - name: Run Unit Tests
-        if: matrix.test-type == 'unit'
         run: |
           docker run --rm \
             --cpus=1 \
@@ -85,7 +75,7 @@ jobs:
             sh -c "npm test -- --reporters=jest-junit && mv junit.xml test-results/unit-test-results.xml"
 
       - name: Run Integration Tests
-        if: matrix.test-type == 'integration' && github.ref == 'refs/heads/develop'
+        if: github.ref == 'refs/heads/develop'
         run: |
           docker run --rm \
             --cpus=1.5 \
@@ -99,8 +89,8 @@ jobs:
         uses: actions/upload-artifact@v3
         if: always()
         with:
-          name: test-results-${{ matrix.test-type }}
-          path: test-results/${{ matrix.test-type }}-test-results.xml
+          name: test-results
+          path: test-results/*.xml
 
   deploy:
     runs-on: self-hosted
@@ -129,7 +119,7 @@ jobs:
 
       - name: Health Check
         run: |
-          sleep 10  # Give container time to start
+          sleep 10
           curl --fail http://localhost:$PORT/health || exit 1
 
   notify:
@@ -141,18 +131,11 @@ jobs:
         if: failure()
         uses: slackapi/slack-github-action@v1.24.0
         with:
-          payload: |
-            {
-              "text": "🚨 Pipeline failed: ${{ github.workflow }} on ${{ github.ref }}",
-              "attachments": [{
-                "color": "#ff0000",
-                "fields": [
-                  { "title": "Repository", "value": "${{ github.repository }}", "short": true },
-                  { "title": "Branch", "value": "${{ github.ref }}", "short": true },
-                  { "title": "Commit", "value": "${{ github.sha }}", "short": false },
-                  { "title": "Failed Job", "value": "${{ needs.*.result }}", "short": false }
-                ]
-              }]
-            }
+          slack-message: |
+            Pipeline failed: ${{ github.workflow }} on ${{ github.ref }}
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref }}
+            Commit: ${{ github.sha }}
+            Failed Job: ${{ contains(needs.*.result, 'failure') }}
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
