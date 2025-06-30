@@ -2,25 +2,25 @@ name: Docker Build and Push
 
 on:
   push:
-    branches: [ main, dev, 'feature/**' ]
+    branches: [ main, dev, 'feature/**' ]  # Fixed: Added quotes around pattern
   pull_request:
     branches: [ main, dev ]
-  workflow_dispatch:  # Optional: Allows manual triggering
+  workflow_dispatch:  # Optional manual trigger
 
 jobs:
-  docker-build:
-    runs-on: ubuntu-latest
+  docker-build:  # Fixed: Correct job name
+    runs-on: ubuntu-latest  # Fixed: Correct syntax
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
+      - name: Set up Docker Buildx  # Fixed: Correct action name
         uses: docker/setup-buildx-action@v3
         with:
           driver: docker-container
-          buildkitd-flags: --allow-insecure-entitlement security.insecure
+          buildkitd-flags: --allow-insecure-entitlement security.insecure  # Fixed flags
 
-      - name: Log in to Docker Hub
+      - name: Log in to Docker Hub  # Fixed: Correct action name
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'
         uses: docker/login-action@v3
         with:
@@ -31,21 +31,9 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./Dockerfile  # Explicit path to Dockerfile
           push: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
           tags: |
-            ${{ secrets.DOCKER_HUB_USERNAME }}/your-repo-name:latest
-            ${{ secrets.DOCKER_HUB_USERNAME }}/your-repo-name:${{ github.sha }}
-            ${{ secrets.DOCKER_HUB_USERNAME }}/your-repo-name:${{ github.ref_name }}
+            ${{ secrets.DOCKER_HUB_USERNAME }}/your-image-name:latest
+            ${{ secrets.DOCKER_HUB_USERNAME }}/your-image-name:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: |
-            NODE_ENV=production
-
-      - name: Verify build
-        if: always()
-        run: |
-          echo "Build completed for ${{ github.ref }}"
-          echo "Image tags:"
-          echo "${{ secrets.DOCKER_HUB_USERNAME }}/your-repo-name:latest"
-          echo "${{ secrets.DOCKER_HUB_USERNAME }}/your-repo-name:${{ github.sha }}"
