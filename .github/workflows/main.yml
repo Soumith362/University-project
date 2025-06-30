@@ -2,7 +2,7 @@ name: Docker Build and Push
 
 on:
   push:
-    branches: [ main, dev, feature/** ]
+    branches: [ main, dev, 'feature/**' ]
   pull_request:
     branches: [ main, dev ]
 
@@ -27,13 +27,13 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
-      - name: Build Docker image
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
           tags: |
-            your-dockerhub-username/your-image-name:${{ github.sha }}
-            your-dockerhub-username/your-image-name:${{ github.ref_name }}
+            your-username/your-image:${{ github.sha }}
+            your-username/your-image:${{ github.ref_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
