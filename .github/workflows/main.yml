@@ -1,218 +1,39 @@
-name: Full Stack CI/CD Pipeline
+name: Docker Build and Push
 
 on:
   push:
-    branches:
-      - master
-      - staging
-      - develop
-      - 'feature/**'
+    branches: [ main, dev, feature/** ]
   pull_request:
-    branches:
-      - develop
-
-env:
-  DOCKER_BUILDKIT: 1
-  COMPOSE_DOCKER_CLI_BUILD: 1
-  DOCKER_IMAGE: backend
-  PORT: 5000
-  TEST_RESULTS_DIR: ./test-results
+    branches: [ main, dev ]
 
 jobs:
-  setup:
+  build-and-push:
     runs-on: ubuntu-latest
-    outputs:
-      should_push: ${{ steps.check_registry.outputs.should_push }}
     steps:
-      - name: Check Registry Requirements
-        id: check_registry
-        run: |
-          if [[ '${{ github.ref }}' == 'refs/heads/master' || '${{ github.ref }}' == 'refs/heads/staging' ]] && [[ -n "${{ secrets.DOCKER_USERNAME }}" && -n "${{ secrets.DOCKER_PASSWORD }}" ]]; then
-            echo "should_push=true" >> $GITHUB_OUTPUT
-          else
-            echo "should_push=false" >> $GITHUB_OUTPUT
-          fi
-
-  build:
-    runs-on: self-hosted
-    needs: setup
-    outputs:
-      image-tag: ${{ steps.set-tag.outputs.tag }}
-    steps:
-      - name: Checkout Repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Cache Docker layers
-        uses: actions/cache@v3
+        uses: docker/setup-buildx-action@v3
         with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
+          driver: docker-container
+          # Enable cache support
+          buildkitd-flags: --allow-insecure-entitlement security.insecure
 
-      - name: Login to Docker Registry
-        if: needs.setup.outputs.should_push == 'true'
-        uses: docker/login-action@v2
+      - name: Login to Docker Hub
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'
+        uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
-      - name: Build and Cache Docker Image
-        run: |
-          docker build \
-            --cache-from type=local,src=/tmp/.buildx-cache \
-            --cache-to type=local,dest=/tmp/.buildx-cache-new \
-            -t $DOCKER_IMAGE:${{ github.ref_name }} \
-            -t $DOCKER_IMAGE:latest \
-            -t $DOCKER_IMAGE:${{ github.sha }} \
-            .
-          rm -rf /tmp/.buildx-cache && mv /tmp/.buildx-cache-new /tmp/.buildx-cache
-
-      - name: Push to Registry
-        if: needs.setup.outputs.should_push == 'true'
-        run: |
-          docker push $DOCKER_IMAGE:${{ github.ref_name }}
-          docker push $DOCKER_IMAGE:latest
-          docker push $DOCKER_IMAGE:${{ github.sha }}
-
-      - name: Set Image Tag Output
-        id: set-tag
-        run: echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-
-  test:
-    runs-on: self-hosted
-    needs: build
-    if: startsWith(github.ref, 'refs/heads/feature/') || github.ref == 'refs/heads/develop' || github.event_name == 'pull_request'
-    steps:
-      - name: Run Unit Tests
-        run: |
-          mkdir -p $TEST_RESULTS_DIR
-          docker run --rm \
-            --cpus=1 \
-            -v $(pwd)/$TEST_RESULTS_DIR:/app/$TEST_RESULTS_DIR \
-            $DOCKER_IMAGE:${{ needs.build.outputs.image-tag }} \
-            sh -c "npm test -- --reporters=jest-junit --reporters=default && mv junit.xml $TEST_RESULTS_DIR/unit-test-results.xml"
-
-      - name: Run Integration Tests
-        if: github.ref == 'refs/heads/develop' || github.event_name == 'pull_request'
-        run: |
-          docker run --rm \
-            --cpus=1.5 \
-            -e NODE_ENV=test \
-            -e TEST_DB_URL=${{ secrets.TEST_DB_URL }} \
-            -v $(pwd)/$TEST_RESULTS_DIR:/app/$TEST_RESULTS_DIR \
-            $DOCKER_IMAGE:${{ needs.build.outputs.image-tag }} \
-            sh -c "npm run test:integration -- --reporters=jest-junit && mv junit.xml $TEST_RESULTS_DIR/integration-test-results.xml"
-
-      - name: Publish Test Results
-        uses: actions/upload-artifact@v3
-        if: always()
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
         with:
-          name: test-results
-          path: $TEST_RESULTS_DIR/*.xml
-
-  deploy:
-    runs-on: self-hosted
-    needs: [build, test]
-    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/staging' || (github.ref == 'refs/heads/develop' && github.event_name == 'push')
-    steps:
-      - name: Validate Deployment
-        id: validate
-        run: |
-          if [ "${{ github.ref }}" == "refs/heads/master" ]; then
-            echo "ENVIRONMENT=production" >> $GITHUB_OUTPUT
-          elif [ "${{ github.ref }}" == "refs/heads/staging" ]; then
-            echo "ENVIRONMENT=staging" >> $GITHUB_OUTPUT
-          else
-            echo "ENVIRONMENT=development" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Stop and Remove Existing Container
-        timeout-minutes: 2
-        run: |
-          timeout 60 docker stop backend-${{ steps.validate.outputs.ENVIRONMENT }} || true
-          docker rm backend-${{ steps.validate.outputs.ENVIRONMENT }} || true
-
-      - name: Deploy Container
-        run: |
-          docker run -d \
-            --name backend-${{ steps.validate.outputs.ENVIRONMENT }} \
-            -p $PORT:$PORT \
-            --restart unless-stopped \
-            --cpus="1.5" \
-            --memory="512m" \
-            -e NODE_ENV=${{ steps.validate.outputs.ENVIRONMENT }} \
-            -e PORT=$PORT \
-            -e DB_URL=${{ secrets.DB_URL }} \
-            -v /var/log/backend:/app/logs \
-            $DOCKER_IMAGE:${{ needs.build.outputs.image-tag }}
-
-      - name: Health Check
-        run: |
-          sleep 15
-          for i in {1..5}; do
-            if curl --fail http://localhost:$PORT/health; then
-              exit 0
-            fi
-            sleep 5
-          done
-          exit 1
-
-  notify:
-    runs-on: ubuntu-latest
-    needs: [build, test, deploy]
-    if: always()
-    steps:
-      - name: Pipeline Status
-        id: status
-        run: |
-          if [[ ${{ needs.build.result }} == 'failure' || ${{ needs.test.result }} == 'failure' || ${{ needs.deploy.result }} == 'failure' ]]; then
-            echo "status=Failed" >> $GITHUB_OUTPUT
-            echo "message=🚨 Pipeline failed in job: ${{ contains(needs.*.result, 'failure') }}" >> $GITHUB_OUTPUT
-          else
-            echo "status=Success" >> $GITHUB_OUTPUT
-            echo "message=✅ Pipeline succeeded! Deployed ${{ github.ref }} to ${{ needs.deploy.outputs.ENVIRONMENT || 'N/A' }}" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Slack Notification
-        uses: slackapi/slack-github-action@v1.24.0
-        with:
-          payload: |
-            {
-              "text": "${{ steps.status.outputs.message }}",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*${{ github.workflow }}* - ${{ steps.status.outputs.status }}"
-                  }
-                },
-                {
-                  "type": "section",
-                  "fields": [
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Repository*\n${{ github.repository }}"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Branch*\n${{ github.ref }}"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Commit*\n<https://github.com/${{ github.repository }}/commit/${{ github.sha }}|${GITHUB_SHA:0:7}>"
-                    },
-                    {
-                      "type": "mrkdwn",
-                      "text": "*Environment*\n${{ needs.deploy.outputs.ENVIRONMENT || 'N/A' }}"
-                    }
-                  ]
-                }
-              ]
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          context: .
+          push: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
+          tags: |
+            your-dockerhub-username/your-image-name:${{ github.sha }}
+            your-dockerhub-username/your-image-name:${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
