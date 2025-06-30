@@ -43,20 +43,29 @@ jobs:
           echo "🔨 Building Docker image $IMAGE_NAME:$TAG"
           docker build -t $IMAGE_NAME:$TAG .
 
-      - name: Skip tests (none defined)
+      - name: Run tests (skipped)
         if: github.ref_name == matrix.branch
-        run: |
-          echo "🧪 No tests defined. Skipping test step..."
+        run: echo "🧪 Skipping tests..."
 
       - name: Deploy Docker container
         if: github.ref_name == matrix.branch
         run: |
           echo "🚀 Deploying Docker container for ${{ matrix.branch }}"
+
           docker stop uni-${{ matrix.branch }} || true
           docker rm uni-${{ matrix.branch }} || true
 
-          docker run -d \
-            --name uni-${{ matrix.branch }} \
-            -p ${{ matrix.port }}:8080 \
-            --env-file ${{ matrix.env_file }} \
-            $IMAGE_NAME:$TAG
+          if [ -f "${{ matrix.env_file }}" ]; then
+            echo "✅ Found env file: ${{ matrix.env_file }}"
+            docker run -d \
+              --name uni-${{ matrix.branch }} \
+              -p ${{ matrix.port }}:8080 \
+              --env-file ${{ matrix.env_file }} \
+              $IMAGE_NAME:$TAG
+          else
+            echo "⚠️ Warning: Env file ${{ matrix.env_file }} not found. Running container without it."
+            docker run -d \
+              --name uni-${{ matrix.branch }} \
+              -p ${{ matrix.port }}:8080 \
+              $IMAGE_NAME:$TAG
+          fi
