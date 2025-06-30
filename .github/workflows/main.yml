@@ -31,7 +31,7 @@ jobs:
     steps:
       - name: Run for matching branch only
         if: github.ref_name == matrix.branch
-        run: echo "🏁 Running CI for ${{ matrix.branch }} branch..."
+        run: echo "🏁 Starting pipeline for ${{ matrix.branch }} branch..."
 
       - name: Checkout code
         if: github.ref_name == matrix.branch
@@ -43,16 +43,15 @@ jobs:
           echo "🔨 Building Docker image $IMAGE_NAME:$TAG"
           docker build -t $IMAGE_NAME:$TAG .
 
-      - name: Run tests
+      - name: Skip tests (none defined)
         if: github.ref_name == matrix.branch
         run: |
-          echo "🧪 Running tests..."
-          docker run --rm $IMAGE_NAME:$TAG npm test
+          echo "🧪 No tests defined. Skipping test step..."
 
-      - name: Deploy Container
+      - name: Deploy Docker container
         if: github.ref_name == matrix.branch
         run: |
-          echo "🚀 Deploying container for ${{ matrix.branch }}"
+          echo "🚀 Deploying Docker container for ${{ matrix.branch }}"
           docker stop uni-${{ matrix.branch }} || true
           docker rm uni-${{ matrix.branch }} || true
 
